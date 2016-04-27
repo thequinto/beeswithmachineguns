@@ -500,7 +500,7 @@ def _create_request_time_cdf_csv(results, complete_bees_params, request_time_cdf
         # see http://python3porting.com/problems.html#csv-api-changes
         openmode = IS_PY2 and 'w' or 'wt'
         openkwargs = IS_PY2 and {} or {'encoding': 'utf-8', 'newline': ''}
-        with open(csv_filename, openmode, openkwargs) as stream:
+        with open(csv_filename, openmode) as stream:
             writer = csv.writer(stream)
             header = ["% faster than", "all bees [ms]"]
             for p in complete_bees_params:
@@ -648,7 +648,7 @@ def attack(url, n, c, **options):
         params.append({
             'i': i,
             'instance_id': instance.id,
-            'instance_name': instance.private_dns_name if instance.public_dns_name == "" else instance.public_dns_name,
+            'instance_name': instance.private_ip_address,
             'url': url,
             'concurrent_requests': connections_per_instance,
             'num_requests': requests_per_instance,
