@@ -119,6 +119,9 @@ commands:
     attack_group.add_option('-P', '--contenttype', metavar="CONTENTTYPE", nargs=1,
                             action='store', dest='contenttype', type='string', default='text/plain',
                             help="ContentType header to send to the target of the attack.")
+    attack_group.add_option('-d', '--duration', metavar="DURATION", nargs=1,
+                            action='store', dest='duration', type='string', default='5s',
+                            help="Duration to run test for.")
 
     # Optional
     attack_group.add_option('-T', '--tpr', metavar='TPR', nargs=1, action='store', dest='tpr', default=None, type='float',
@@ -164,7 +167,8 @@ commands:
             tpr=options.tpr,
             rps=options.rps,
             basic_auth=options.basic_auth,
-            contenttype=options.contenttype
+            contenttype=options.contenttype,
+            duration=options.duration
         )
 
         bees.attack(options.url, options.number, options.concurrent, **additional_options)

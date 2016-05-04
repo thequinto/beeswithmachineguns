@@ -359,22 +359,31 @@ def _attack(params):
             options += ' -A %s' % params['basic_auth']
 
         params['options'] = options
-        benchmark_command = 'ab -v 3 -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
-        #print(benchmark_command)
+        #benchmark_command = 'ab -v 3 -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
+        benchmark_command = 'siege --log=/home/newsapps/siege-3.1.4/siege.log -c %(concurrent_requests)s -t %(duration)s "%(url)s" -d 0' % params
         stdin, stdout, stderr = client.exec_command(benchmark_command)
 
         response = {}
 
         # paramiko's read() returns bytes which need to be converted back to a str
-        ab_results = IS_PY2 and stdout.read() or stdout.read().decode('utf-8')
-        ms_per_request_search = re.search('Time\ per\ request:\s+([0-9.]+)\ \[ms\]\ \(mean\)', ab_results)
+        so_text = IS_PY2 and stdout.read() or stdout.read().decode('utf-8')
+        ab_results = IS_PY2 and stderr.read() or stderr.read().decode('utf-8')
+        ms_per_request_search = re.search('Response\ time:\s+([0-9.]+)\ secs', ab_results)
+        
+        #so_transactions_pass = re.search('Successful\ transactions:\s+([0-9]+)', ab_results)
+        #so_availability = re.search('Availability:\s+([0-9.]+)\ %', ab_results)
+        so_data = re.search('Data\ transferred:\s+(.*)\ MB', ab_results)
+        so_data_rate = re.search('Throughput:\s+(.*)\ MB/sec', ab_results)
+        #so_transaction_max = re.search('Longest\ transaction:\s+([0-9.]+)', ab_results)
+        #so_transaction_min = re.search('Shortest\ transaction:\s+([0-9.]+)', ab_results)
+        so_concurrency = re.search('Concurrency:\s+([0-9.]+)', ab_results)
 
         if not ms_per_request_search:
             print('Bee %i lost sight of the target (connection timed out running ab).' % params['i'])
             return None
 
-        requests_per_second_search = re.search('Requests\ per\ second:\s+([0-9.]+)\ \[#\/sec\]\ \(mean\)', ab_results)
-        failed_requests = re.search('Failed\ requests:\s+([0-9.]+)', ab_results)
+        requests_per_second_search = re.search('Transaction\ rate:\s+([0-9.]+)\ trans/sec', ab_results)
+        failed_requests = re.search('Failed\ transactions:\s+([0-9]+)', ab_results)
         response['failed_requests_connect'] = 0
         response['failed_requests_receive'] = 0
         response['failed_requests_length'] = 0
@@ -387,17 +396,20 @@ def _attack(params):
                 response['failed_requests_length'] = float(re.search('Length:\s+([0-9.]+)', failed_requests_detail.group(0)).group(1))
                 response['failed_requests_exceptions'] = float(re.search('Exceptions:\s+([0-9.]+)', failed_requests_detail.group(0)).group(1))
 
-        complete_requests_search = re.search('Complete\ requests:\s+([0-9]+)', ab_results)
+        complete_requests_search = re.search('Transactions:\s+([0-9]+)\ hits', ab_results)
 
-        response['number_of_200s'] = len(re.findall('HTTP/1.1\ 2[0-9][0-9]', ab_results))
-        response['number_of_300s'] = len(re.findall('HTTP/1.1\ 3[0-9][0-9]', ab_results))
-        response['number_of_400s'] = len(re.findall('HTTP/1.1\ 4[0-9][0-9]', ab_results))
-        response['number_of_500s'] = len(re.findall('HTTP/1.1\ 5[0-9][0-9]', ab_results))
+        response['number_of_200s'] = len(re.findall('HTTP/1.[01]\ 2[0-9][0-9]', so_text))
+        response['number_of_300s'] = len(re.findall('HTTP/1.[01]\ 3[0-9][0-9]', so_text))
+        response['number_of_400s'] = len(re.findall('HTTP/1.[01]\ 4[0-9][0-9]', so_text))
+        response['number_of_500s'] = len(re.findall('HTTP/1.[01]\ 5[0-9][0-9]', so_text))
 
         response['ms_per_request'] = float(ms_per_request_search.group(1))
         response['requests_per_second'] = float(requests_per_second_search.group(1))
         response['failed_requests'] = float(failed_requests.group(1))
         response['complete_requests'] = float(complete_requests_search.group(1))
+        response['data_transferred'] = float(so_data.group(1))
+        response['data_transferred_rate'] = float(so_data_rate.group(1))
+        response['concurrency'] = float(so_concurrency.group(1))
 
         stdin, stdout, stderr = client.exec_command('cat %(csv_filename)s' % params)
         response['request_time_cdf'] = []
@@ -438,6 +450,15 @@ def _summarize_results(results, params, csv_filename):
 
     complete_results = [r['failed_requests'] for r in summarized_results['complete_bees']]
     summarized_results['total_failed_requests'] = sum(complete_results)
+
+    complete_results = [r['data_transferred'] for r in summarized_results['complete_bees']]
+    summarized_results['total_data_transferred'] = sum(complete_results)
+
+    complete_results = [r['data_transferred_rate'] for r in summarized_results['complete_bees']]
+    summarized_results['total_data_transferred_rate'] = sum(complete_results)
+
+    complete_results = [r['concurrency'] for r in summarized_results['complete_bees']]
+    summarized_results['total_concurrency'] = sum(complete_results)
 
     complete_results = [r['failed_requests_connect'] for r in summarized_results['complete_bees']]
     summarized_results['total_failed_requests_connect'] = sum(complete_results)
@@ -487,9 +508,9 @@ def _summarize_results(results, params, csv_filename):
         else:
             summarized_results['performance_accepted'] = False
 
-    summarized_results['request_time_cdf'] = _get_request_time_cdf(summarized_results['total_complete_requests'], summarized_results['complete_bees'])
-    if csv_filename:
-        _create_request_time_cdf_csv(results, summarized_results['complete_bees_params'], summarized_results['request_time_cdf'], csv_filename)
+    #summarized_results['request_time_cdf'] = _get_request_time_cdf(summarized_results['total_complete_requests'], summarized_results['complete_bees'])
+    #if csv_filename:
+        #_create_request_time_cdf_csv(results, summarized_results['complete_bees_params'], summarized_results['request_time_cdf'], csv_filename)
 
     return summarized_results
 
@@ -563,27 +584,30 @@ def _print_results(summarized_results):
     print('          3xx:\t\t%i' % summarized_results['total_number_of_300s'])
     print('          4xx:\t\t%i' % summarized_results['total_number_of_400s'])
     print('          5xx:\t\t%i' % summarized_results['total_number_of_500s'])
-    print('     Requests per second:\t%f [#/sec] (mean of bees)' % summarized_results['mean_requests'])
+    print('     Total data transferred:\t\t%.2f [MB]' % summarized_results['total_data_transferred'])
+    print('     Total data transferred rate:\t%.2f [MB/s]' % summarized_results['total_data_transferred_rate'])
+    print('     Total concurrency:\t\t%.2f' % summarized_results['total_concurrency'])
+    print('     Requests per second:\t%.2f [#/sec] (mean of bees)' % summarized_results['mean_requests'])
     if 'rps_bounds' in summarized_results and summarized_results['rps_bounds'] is not None:
         print('     Requests per second:\t%f [#/sec] (upper bounds)' % summarized_results['rps_bounds'])
 
-    print('     Time per request:\t\t%f [ms] (mean of bees)' % summarized_results['mean_response'])
+    print('     Time per request:\t\t%.2f [s] (mean of bees)' % summarized_results['mean_response'])
     if 'tpr_bounds' in summarized_results and summarized_results['tpr_bounds'] is not None:
         print('     Time per request:\t\t%f [ms] (lower bounds)' % summarized_results['tpr_bounds'])
 
-    print('     50%% responses faster than:\t%f [ms]' % summarized_results['request_time_cdf'][49])
-    print('     90%% responses faster than:\t%f [ms]' % summarized_results['request_time_cdf'][89])
+    #print('     50%% responses faster than:\t%f [ms]' % summarized_results['request_time_cdf'][49])
+    #print('     90%% responses faster than:\t%f [ms]' % summarized_results['request_time_cdf'][89])
 
     if 'performance_accepted' in summarized_results:
         print('     Performance check:\t\t%s' % summarized_results['performance_accepted'])
 
-    if summarized_results['mean_response'] < 500:
+    if summarized_results['mean_response'] < 500/1000:
         print('Mission Assessment: Target crushed bee offensive.')
-    elif summarized_results['mean_response'] < 1000:
+    elif summarized_results['mean_response'] < 1000/1000:
         print('Mission Assessment: Target successfully fended off the swarm.')
-    elif summarized_results['mean_response'] < 1500:
+    elif summarized_results['mean_response'] < 1500/1000:
         print('Mission Assessment: Target wounded, but operational.')
-    elif summarized_results['mean_response'] < 2000:
+    elif summarized_results['mean_response'] < 2000/1000:
         print('Mission Assessment: Target severely compromised.')
     else:
         print('Mission Assessment: Swarm annihilated target.')
@@ -601,6 +625,7 @@ def attack(url, n, c, **options):
     post_file = options.get('post_file', '')
     keep_alive = options.get('keep_alive', False)
     basic_auth = options.get('basic_auth', '')
+    duration = options.get('duration', '5s')
 
     if csv_filename:
         try:
@@ -627,7 +652,7 @@ def attack(url, n, c, **options):
 
     instance_count = len(instances)
 
-    if n < instance_count * 2:
+    if n < instance_count:
         print('bees: error: the total number of requests must be at least %d (2x num. instances)' % (instance_count * 2))
         return
     if c < instance_count:
@@ -636,11 +661,14 @@ def attack(url, n, c, **options):
     if n < c:
         print('bees: error: the number of concurrent requests (%d) must be at most the same as number of requests (%d)' % (c, n))
         return
+    if c > 255:
+        print('bees: error: siege max concurrent requests is 255 unless otherwise configured')
+        return
 
     requests_per_instance = int(float(n) / instance_count)
-    connections_per_instance = int(float(c) / instance_count)
+    connections_per_instance = int(c)
 
-    print('Each of %i bees will fire %s rounds, %s at a time.' % (instance_count, requests_per_instance, connections_per_instance))
+    #print('Each of %i bees will fire %s rounds, %s at a time.' % (instance_count, requests_per_instance, connections_per_instance))
 
     params = []
 
@@ -662,7 +690,8 @@ def attack(url, n, c, **options):
             'mime_type': options.get('mime_type', ''),
             'tpr': options.get('tpr'),
             'rps': options.get('rps'),
-            'basic_auth': options.get('basic_auth')
+            'basic_auth': options.get('basic_auth'),
+            'duration': options.get('duration')
         })
 
     print('Stinging URL so it will be cached for the attack.')
