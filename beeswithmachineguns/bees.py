@@ -28,7 +28,9 @@ from multiprocessing import Pool
 import os
 import re
 import socket
+import math
 import time
+import datetime
 import sys
 IS_PY2 = sys.version_info.major == 2
 if IS_PY2:
@@ -49,6 +51,7 @@ import boto.exception
 import paramiko
 
 STATE_FILENAME = os.path.expanduser('~/.bees')
+RESULTS_FILENAME = os.path.expanduser('~/siegeresults.csv')
 
 # Utilities
 
@@ -361,6 +364,7 @@ def _attack(params):
         params['options'] = options
         #benchmark_command = 'ab -v 3 -r -n %(num_requests)s -c %(concurrent_requests)s %(options)s "%(url)s"' % params
         benchmark_command = 'siege --log=/home/newsapps/siege-3.1.4/siege.log -c %(concurrent_requests)s -t %(duration)s "%(url)s" -d 0' % params
+        print(benchmark_command)
         stdin, stdout, stderr = client.exec_command(benchmark_command)
 
         response = {}
@@ -374,9 +378,10 @@ def _attack(params):
         #so_availability = re.search('Availability:\s+([0-9.]+)\ %', ab_results)
         so_data = re.search('Data\ transferred:\s+(.*)\ MB', ab_results)
         so_data_rate = re.search('Throughput:\s+(.*)\ MB/sec', ab_results)
-        #so_transaction_max = re.search('Longest\ transaction:\s+([0-9.]+)', ab_results)
-        #so_transaction_min = re.search('Shortest\ transaction:\s+([0-9.]+)', ab_results)
+        so_transaction_max = re.search('Longest\ transaction:\s+([0-9.]+)', ab_results)
+        so_transaction_min = re.search('Shortest\ transaction:\s+([0-9.]+)', ab_results)
         so_concurrency = re.search('Concurrency:\s+([0-9.]+)', ab_results)
+        so_elapsed_time = re.search('Elapsed\ time:\s+([0-9.]+)\ secs', ab_results)
 
         if not ms_per_request_search:
             print('Bee %i lost sight of the target (connection timed out running ab).' % params['i'])
@@ -407,18 +412,17 @@ def _attack(params):
         response['requests_per_second'] = float(requests_per_second_search.group(1))
         response['failed_requests'] = float(failed_requests.group(1))
         response['complete_requests'] = float(complete_requests_search.group(1))
+        response['max_request'] = float(so_transaction_max.group(1))
+        response['min_request'] = float(so_transaction_min.group(1))
         response['data_transferred'] = float(so_data.group(1))
         response['data_transferred_rate'] = float(so_data_rate.group(1))
         response['concurrency'] = float(so_concurrency.group(1))
+        response['elapsed_time'] = float(so_elapsed_time.group(1))
+        response['request_log'] = re.findall('HTTP/1.[01]\ ([2-5][0-9][0-9])\s+([0-9.]+)\ secs', so_text)
+
 
         stdin, stdout, stderr = client.exec_command('cat %(csv_filename)s' % params)
         response['request_time_cdf'] = []
-        for row in csv.DictReader(stdout):
-            row["Time in ms"] = float(row["Time in ms"])
-            response['request_time_cdf'].append(row)
-        if not response['request_time_cdf']:
-            print('Bee %i lost sight of the target (connection timed out reading csv).' % params['i'])
-            return None
 
         print('Bee %i is out of ammo.' % params['i'])
 
@@ -445,11 +449,37 @@ def _summarize_results(results, params, csv_filename):
     summarized_results['num_exception_bees'] = len(summarized_results['exception_bees'])
     summarized_results['num_complete_bees'] = len(summarized_results['complete_bees'])
 
+    openmode = IS_PY2 and 'w' or 'wt'
+    timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y%m%d%H%M%S')
+    filename = 'siegeoutput-' + timestamp + '.csv'
+    with open(filename, openmode) as stream:
+        writer = csv.writer(stream)
+        header = ['http-response-code', 'response-time']
+        writer.writerow(header)
+        times = []
+        for (code, response_time) in [(code, response_time) for bee in summarized_results['complete_bees'] for (code, response_time) in bee['request_log']]:
+            times.append(float(response_time))
+            writer.writerow([code, response_time])
+        total_requests = len(times)
+        if total_requests != 0:
+            mean_time = sum(times) / total_requests
+            variances = []
+            for t in times:
+                variances.append((float(t) - mean_time) ** 2)
+            mean_variance = sum(variances) / total_requests
+            stdev = math.sqrt(mean_variance)    
+
     complete_results = [r['complete_requests'] for r in summarized_results['complete_bees']]
-    summarized_results['total_complete_requests'] = sum(complete_results)
+    summarized_results['total_complete_requests'] = total_requests
 
     complete_results = [r['failed_requests'] for r in summarized_results['complete_bees']]
     summarized_results['total_failed_requests'] = sum(complete_results)
+
+    complete_results = [r['max_request'] for r in summarized_results['complete_bees']]
+    summarized_results['max_request'] = max(complete_results)
+
+    complete_results = [r['min_request'] for r in summarized_results['complete_bees']]
+    summarized_results['min_request'] = min(complete_results)
 
     complete_results = [r['data_transferred'] for r in summarized_results['complete_bees']]
     summarized_results['total_data_transferred'] = sum(complete_results)
@@ -459,6 +489,9 @@ def _summarize_results(results, params, csv_filename):
 
     complete_results = [r['concurrency'] for r in summarized_results['complete_bees']]
     summarized_results['total_concurrency'] = sum(complete_results)
+
+    complete_results = [r['elapsed_time'] for r in summarized_results['complete_bees']]
+    summarized_results['mean_elapsed_time'] = sum(complete_results) / summarized_results['num_complete_bees']
 
     complete_results = [r['failed_requests_connect'] for r in summarized_results['complete_bees']]
     summarized_results['total_failed_requests_connect'] = sum(complete_results)
@@ -490,8 +523,10 @@ def _summarize_results(results, params, csv_filename):
     complete_results = [r['ms_per_request'] for r in summarized_results['complete_bees']]
     if summarized_results['num_complete_bees'] == 0:
         summarized_results['mean_response'] = "no bees are complete"
+        summarized_results['standard_deviation'] = "no bees are complete"
     else:
-        summarized_results['mean_response'] = sum(complete_results) / summarized_results['num_complete_bees']
+        summarized_results['mean_response'] = mean_time
+        summarized_results['standard_deviation'] = stdev
 
     summarized_results['tpr_bounds'] = params[0]['tpr']
     summarized_results['rps_bounds'] = params[0]['rps']
@@ -512,6 +547,18 @@ def _summarize_results(results, params, csv_filename):
     #if csv_filename:
         #_create_request_time_cdf_csv(results, summarized_results['complete_bees_params'], summarized_results['request_time_cdf'], csv_filename)
 
+    if not os.path.isfile(RESULTS_FILENAME):
+        header = ['timestamp', 'num-complete-requests', 'elapsed-time', 'data-transferred', 'response-time', 'response-time-max', 'response-time-min', 'response-time-stdev', 'transaction-rate', 'data-throughput', 'concurrent', 'num-okay', 'num-okay-2xx', 'num-okay-3xx', 'num-okay-4xx', 'num-okay-5xx', 'num-failed']
+    else:
+        header = ''
+    openmode = IS_PY2 and 'a' or 'at'
+    with open(RESULTS_FILENAME, openmode) as stream:
+        writer = csv.writer(stream)
+        if header:
+            print('adding header to file')
+            writer.writerow(header)
+        writer.writerow([timestamp, total_requests, summarized_results['mean_elapsed_time'], summarized_results['total_data_transferred'], mean_time, summarized_results['max_request'], summarized_results['min_request'], stdev, summarized_results['mean_requests'], summarized_results['total_data_transferred_rate'], summarized_results['total_concurrency'], total_requests, summarized_results['total_number_of_200s'], summarized_results['total_number_of_300s'], summarized_results['total_number_of_400s'], summarized_results['total_number_of_500s'], summarized_results['total_failed_requests']])
+
     return summarized_results
 
 
@@ -531,7 +578,7 @@ def _create_request_time_cdf_csv(results, complete_bees_params, request_time_cdf
                 row = [i, request_time_cdf[i]] if i < len(request_time_cdf) else [i,float("inf")]
                 for r in results:
                     if r is not None:
-                    	row.append(r['request_time_cdf'][i]["Time in ms"])
+                        row.append(r['request_time_cdf'][i]["Time in ms"])
                 writer.writerow(row)
 
 
@@ -591,7 +638,10 @@ def _print_results(summarized_results):
     if 'rps_bounds' in summarized_results and summarized_results['rps_bounds'] is not None:
         print('     Requests per second:\t%f [#/sec] (upper bounds)' % summarized_results['rps_bounds'])
 
-    print('     Time per request:\t\t%.2f [s] (mean of bees)' % summarized_results['mean_response'])
+    print('     Time per request:\t\t%.4f [s] (mean of bees)' % summarized_results['mean_response'])
+    print('     Max time per request:\t\t%.2f [s]' % summarized_results['max_request'])
+    print('     Min time per request:\t\t%.2f [s]' % summarized_results['min_request'])
+    print('     Standard deviation of request times:\t%.4f [s]' % summarized_results['standard_deviation'])
     if 'tpr_bounds' in summarized_results and summarized_results['tpr_bounds'] is not None:
         print('     Time per request:\t\t%f [ms] (lower bounds)' % summarized_results['tpr_bounds'])
 
@@ -601,13 +651,13 @@ def _print_results(summarized_results):
     if 'performance_accepted' in summarized_results:
         print('     Performance check:\t\t%s' % summarized_results['performance_accepted'])
 
-    if summarized_results['mean_response'] < 500/1000:
+    if summarized_results['mean_response'] < 0.5:
         print('Mission Assessment: Target crushed bee offensive.')
-    elif summarized_results['mean_response'] < 1000/1000:
+    elif summarized_results['mean_response'] < 1.0:
         print('Mission Assessment: Target successfully fended off the swarm.')
-    elif summarized_results['mean_response'] < 1500/1000:
+    elif summarized_results['mean_response'] < 1.5:
         print('Mission Assessment: Target wounded, but operational.')
-    elif summarized_results['mean_response'] < 2000/1000:
+    elif summarized_results['mean_response'] < 2.0:
         print('Mission Assessment: Target severely compromised.')
     else:
         print('Mission Assessment: Swarm annihilated target.')
