@@ -389,6 +389,7 @@ def _attack(params):
 
         requests_per_second_search = re.search('Transaction\ rate:\s+([0-9.]+)\ trans/sec', ab_results)
         failed_requests = re.search('Failed\ transactions:\s+([0-9]+)', ab_results)
+        response['target_url'] = params['url']
         response['failed_requests_connect'] = 0
         response['failed_requests_receive'] = 0
         response['failed_requests_length'] = 0
@@ -420,7 +421,6 @@ def _attack(params):
         response['elapsed_time'] = float(so_elapsed_time.group(1))
         response['request_log'] = re.findall('HTTP/1.[01]\ ([2-5][0-9][0-9])\s+([0-9.]+)\ secs', so_text)
 
-
         stdin, stdout, stderr = client.exec_command('cat %(csv_filename)s' % params)
         response['request_time_cdf'] = []
 
@@ -450,8 +450,11 @@ def _summarize_results(results, params, csv_filename):
     summarized_results['num_complete_bees'] = len(summarized_results['complete_bees'])
 
     openmode = IS_PY2 and 'w' or 'wt'
-    timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y%m%d%H%M%S')
-    filename = 'siegeoutput-' + timestamp + '.csv'
+    now = datetime.datetime.fromtimestamp(time.time())
+    timestamp = now.strftime('%Y%m%d%H%M%S')
+    timestamp_friendly = now.strftime('%Y%m%d %H%M%S')
+    timestamp_date = now.strftime('%Y%m%d')
+    filename = 'siegeoutput/siegeoutput-' + timestamp + '.csv'
     with open(filename, openmode) as stream:
         writer = csv.writer(stream)
         header = ['http-response-code', 'response-time']
@@ -468,6 +471,8 @@ def _summarize_results(results, params, csv_filename):
                 variances.append((float(t) - mean_time) ** 2)
             mean_variance = sum(variances) / total_requests
             stdev = math.sqrt(mean_variance)    
+
+    summarized_results['target_url'] = summarized_results['complete_bees'][0]['target_url']
 
     complete_results = [r['complete_requests'] for r in summarized_results['complete_bees']]
     summarized_results['total_complete_requests'] = total_requests
@@ -547,17 +552,16 @@ def _summarize_results(results, params, csv_filename):
     #if csv_filename:
         #_create_request_time_cdf_csv(results, summarized_results['complete_bees_params'], summarized_results['request_time_cdf'], csv_filename)
 
-    if not os.path.isfile(RESULTS_FILENAME):
-        header = ['timestamp', 'num-complete-requests', 'elapsed-time', 'data-transferred', 'response-time', 'response-time-max', 'response-time-min', 'response-time-stdev', 'transaction-rate', 'data-throughput', 'concurrent', 'num-okay', 'num-okay-2xx', 'num-okay-3xx', 'num-okay-4xx', 'num-okay-5xx', 'num-failed']
-    else:
-        header = ''
-    openmode = IS_PY2 and 'a' or 'at'
+    header = ''
+    results_filename = 'siegeresults-' + timestamp_date + '.csv'
+    if not os.path.isfile(results_filename):
+        header = ['timestamp', 'url', 'num-complete-requests', 'elapsed-time', 'data-transferred', 'response-time', 'response-time-max', 'response-time-min', 'response-time-stdev', 'transaction-rate', 'data-throughput', 'concurrent', 'num-okay', 'num-okay-2xx', 'num-okay-3xx', 'num-okay-4xx', 'num-okay-5xx', 'num-failed']
+    openmode = IS_PY2 and 'w' or 'wt'
     with open(RESULTS_FILENAME, openmode) as stream:
         writer = csv.writer(stream)
         if header:
-            print('adding header to file')
             writer.writerow(header)
-        writer.writerow([timestamp, total_requests, summarized_results['mean_elapsed_time'], summarized_results['total_data_transferred'], mean_time, summarized_results['max_request'], summarized_results['min_request'], stdev, summarized_results['mean_requests'], summarized_results['total_data_transferred_rate'], summarized_results['total_concurrency'], total_requests, summarized_results['total_number_of_200s'], summarized_results['total_number_of_300s'], summarized_results['total_number_of_400s'], summarized_results['total_number_of_500s'], summarized_results['total_failed_requests']])
+        writer.writerow([timestamp_friendly, summarized_results['target_url'], total_requests, summarized_results['mean_elapsed_time'], summarized_results['total_data_transferred'], mean_time, summarized_results['max_request'], summarized_results['min_request'], stdev, summarized_results['mean_requests'], summarized_results['total_data_transferred_rate'], summarized_results['total_concurrency'], total_requests, summarized_results['total_number_of_200s'], summarized_results['total_number_of_300s'], summarized_results['total_number_of_400s'], summarized_results['total_number_of_500s'], summarized_results['total_failed_requests']])
 
     return summarized_results
 

@@ -1,0 +1,4 @@
+PATH=/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/aws/bin:/home/tquinto/.local/bin:/home/tquinto/bin
+MAILTO=""
+
+00 04 * * 0 ~/beehive
