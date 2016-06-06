@@ -1,0 +1,16 @@
+#!/bin/bash
+instance_data=$(ec2din -F 'tag:Name=a bee!')
+
+echo "==== region: default" > poke.out
+ec2din -F "tag:Name=a bee!" >> poke.out
+echo "==== region: us-west-1" >> poke.out
+ec2din -F "tag:Name=a bee!" --region us-west-1 >> poke.out
+echo "==== end" >> poke.out
+data=$(cat poke.out)
+count=$(echo "$data" | grep -c INSTANCE)
+
+if [ $count == 0 ]; then
+	printf "there were $count instances found on EC2" | mutt -s "BMG status: clear" tquinto@fxcm.com
+else
+	printf "there were $count instances found on EC2:\n$data\n" | mutt -s "BMG status: found instances" tquinto@fxcm.com
+fi

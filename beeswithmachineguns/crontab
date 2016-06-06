@@ -1,4 +1,6 @@
 PATH=/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/opt/aws/bin:/home/tquinto/.local/bin:/home/tquinto/bin
 MAILTO=""
 
-00 04 * * 0 ~/beehive
+00 14 * * 0 ~/beehive >> ~/beehive.log 2>&1
+00,15,30,45 17 * * 0 ~/beepoke
+00 18 * * 0 ~/beepoke

@@ -3,16 +3,20 @@ wget --spider -r -np -nv -l 1 -w 1 -T 20 -o wget.out https://www.dailyfx.com
 sed -n 's@.\+ URL:\([^ ]\+\) .\+@\1@p' wget.out | sed 's@&@&amp;@' | sed 's@www\.dailyfx@tim-pa1\.dailyfx@' > urllist
 
 bees up -s 2 -k phraseless -g FXCM-EC2-SG -v subnet-c5c1deed -i ami-113adb7c -z us-east-1d
-#bees up -s 2 -k phraseless -g FXCM-EC2-SG -v subnet-c5c1deed -i ami-113adb7c -z us-west-1a
 sleep 300
-
 while read u; do
-	bees attack -c 255 -u $u -d 60s
+	bees attack -c 100 -u $u -d 60s
 done < urllist
+bees down
 
+bees up -s 2 -k phraseless -g FXCM-EC2-SG -v subnet-0efc1c65 -i ami-a02259c0 -z us-west-1a
+sleep 300
+while read u; do
+	bees attack -c 100 -u $u -d 60s
+done < urllist
 bees down
 
 csv_file=$(ls -t siegeresults* | head -1)
-echo "- mailed from the beehive" | mutt -s "BMG load test results" tquinto@fxcm.com -a $csv_file
+echo "- mailed from the beehive" | mutt -s "BMG load test results" dailyfx-support@fxcm.com -a $csv_file
 
 exit 0

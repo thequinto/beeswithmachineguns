@@ -457,7 +457,7 @@ def _summarize_results(results, params, csv_filename):
     filename = 'siegeoutput/siegeoutput-' + timestamp + '.csv'
     with open(filename, openmode) as stream:
         writer = csv.writer(stream)
-        header = ['http-response-code', 'response-time']
+        header = ['http response code', 'response time (s)']
         writer.writerow(header)
         times = []
         for (code, response_time) in [(code, response_time) for bee in summarized_results['complete_bees'] for (code, response_time) in bee['request_log']]:
@@ -555,13 +555,14 @@ def _summarize_results(results, params, csv_filename):
     header = ''
     results_filename = 'siegeresults-' + timestamp_date + '.csv'
     if not os.path.isfile(results_filename):
-        header = ['timestamp', 'url', 'num-complete-requests', 'elapsed-time', 'data-transferred', 'response-time', 'response-time-max', 'response-time-min', 'response-time-stdev', 'transaction-rate', 'data-throughput', 'concurrent', 'num-okay', 'num-okay-2xx', 'num-okay-3xx', 'num-okay-4xx', 'num-okay-5xx', 'num-failed']
-    openmode = IS_PY2 and 'w' or 'wt'
-    with open(RESULTS_FILENAME, openmode) as stream:
+        header = ['url', 'zone', 'timestamp (GMT)', 'num complete requests', 'elapsed time (s)', 'data transferred (MB)', 'response time (s)', 'response time max (s)', 'response time min (s)', 'response time stdev (s)', 'transaction rate (#/s)', 'data throughput (MB/s)', 'concurrent', 'num okay', 'num okay 2xx', 'num okay 3xx', 'num okay 4xx', 'num okay 5xx', 'num failed']
+    openmode = IS_PY2 and 'a' or 'at'
+    with open(results_filename, openmode) as stream:
         writer = csv.writer(stream)
         if header:
             writer.writerow(header)
-        writer.writerow([timestamp_friendly, summarized_results['target_url'], total_requests, summarized_results['mean_elapsed_time'], summarized_results['total_data_transferred'], mean_time, summarized_results['max_request'], summarized_results['min_request'], stdev, summarized_results['mean_requests'], summarized_results['total_data_transferred_rate'], summarized_results['total_concurrency'], total_requests, summarized_results['total_number_of_200s'], summarized_results['total_number_of_300s'], summarized_results['total_number_of_400s'], summarized_results['total_number_of_500s'], summarized_results['total_failed_requests']])
+        existing_username, existing_key_name, existing_zone, instance_ids = _read_server_list()
+        writer.writerow([summarized_results['target_url'], existing_zone, timestamp_friendly, total_requests, summarized_results['mean_elapsed_time'], summarized_results['total_data_transferred'], mean_time, summarized_results['max_request'], summarized_results['min_request'], stdev, summarized_results['mean_requests'], summarized_results['total_data_transferred_rate'], summarized_results['total_concurrency'], total_requests, summarized_results['total_number_of_200s'], summarized_results['total_number_of_300s'], summarized_results['total_number_of_400s'], summarized_results['total_number_of_500s'], summarized_results['total_failed_requests']])
 
     return summarized_results
 
@@ -730,7 +731,7 @@ def attack(url, n, c, **options):
         params.append({
             'i': i,
             'instance_id': instance.id,
-            'instance_name': instance.private_ip_address,
+            'instance_name': instance.ip_address,
             'url': url,
             'concurrent_requests': connections_per_instance,
             'num_requests': requests_per_instance,
@@ -791,7 +792,9 @@ def attack(url, n, c, **options):
 
     response.read()
 
-    print('Organizing the swarm.')
+    now = datetime.datetime.fromtimestamp(time.time())
+    timestamp_friendly = now.strftime('%Y%m%d %H%M%S')
+    print('%s - Organizing the swarm.'  % timestamp_friendly)
     # Spin up processes for connecting to EC2 instances
     pool = Pool(len(params))
     results = pool.map(_attack, params)
